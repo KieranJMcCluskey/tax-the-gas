@@ -1,0 +1,283 @@
+/* ── Reset & base ─────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --green:      #00843D;
+  --green-dim:  #005c2a;
+  --green-glow: rgba(0, 132, 61, 0.25);
+  --gold:       #FFD100;
+  --gold-dim:   #c9a500;
+  --bg:         #0b1a0f;
+  --bg-card:    #111f14;
+  --bg-japan:   #0d1a2e;
+  --text:       #e8f5ec;
+  --text-muted: #7aaa87;
+  --border:     rgba(0, 132, 61, 0.3);
+  --font-mono:  'JetBrains Mono', 'Roboto Mono', 'Courier New', monospace;
+  --font-sans:  system-ui, -apple-system, sans-serif;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+a {
+  color: var(--gold);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+#root { max-width: 1100px; margin: 0 auto; padding: 0 1rem; }
+
+/* ── Header ───────────────────────────────────────────── */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  padding: 1rem 0;
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.logo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.logo-icon { font-size: 1.6rem; }
+
+.logo-text {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.04em;
+}
+
+.data-link {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* ── Hero ─────────────────────────────────────────────── */
+.hero {
+  text-align: center;
+  padding: 3rem 1rem 2rem;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.hero-title {
+  font-size: clamp(1.6rem, 4vw, 2.6rem);
+  font-weight: 800;
+  color: var(--gold);
+  margin-bottom: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.hero-sub {
+  color: var(--text-muted);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+/* ── Main ticker ──────────────────────────────────────── */
+.main-ticker {
+  text-align: center;
+  padding: 2.5rem 1rem 3rem;
+  position: relative;
+}
+
+.main-ticker::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, var(--green-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.ticker-label {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 1rem;
+}
+
+.ticker-amount {
+  font-family: var(--font-mono);
+  font-size: clamp(2.2rem, 7vw, 5rem);
+  font-weight: 700;
+  color: var(--green);
+  text-shadow: 0 0 40px var(--green-glow);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  transition: color 0.1s;
+}
+
+.ticker-since {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.ticker-source {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* ── Service cards ────────────────────────────────────── */
+.service-cards {
+  padding: 1rem 0 3rem;
+}
+
+.cards-heading {
+  text-align: center;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gold-dim);
+  margin-bottom: 1.5rem;
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 900px) { .cards-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .cards-grid { grid-template-columns: 1fr; } }
+
+.service-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.service-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--green);
+  box-shadow: 0 6px 24px var(--green-glow);
+}
+
+.card-icon {
+  font-size: 2rem;
+  display: block;
+  margin-bottom: 0.6rem;
+}
+
+.card-count {
+  font-family: var(--font-mono);
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-weight: 700;
+  color: var(--gold);
+  line-height: 1.1;
+}
+
+.card-unit {
+  font-size: 0.8rem;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0.25rem 0;
+}
+
+.card-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ── Japan ticker ─────────────────────────────────────── */
+.japan-ticker {
+  background: var(--bg-japan);
+  border-top: 1px solid rgba(100, 140, 220, 0.25);
+  border-bottom: 1px solid rgba(100, 140, 220, 0.25);
+  padding: 2.5rem 1rem;
+  margin: 0 -1rem;
+}
+
+.japan-ticker-inner {
+  max-width: 800px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.japan-label {
+  font-size: 0.85rem;
+  color: #7a9abf;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 1rem;
+}
+
+.japan-amounts {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.japan-yen {
+  font-family: var(--font-mono);
+  font-size: clamp(1.2rem, 3.5vw, 2rem);
+  font-weight: 700;
+  color: #a8c4e8;
+}
+
+.japan-divider {
+  color: #5a7a9a;
+  font-size: 1.2rem;
+}
+
+.japan-aud {
+  font-family: var(--font-mono);
+  font-size: clamp(1rem, 2.5vw, 1.5rem);
+  color: #7aaccc;
+}
+
+.japan-note {
+  font-size: 0.78rem;
+  color: #5a7a9a;
+  line-height: 1.6;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* ── Footer ───────────────────────────────────────────── */
+.site-footer {
+  border-top: 1px solid var(--border);
+  padding: 2rem 0;
+  margin-top: 3rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+
+/* ── Fade-in on load ──────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.hero         { animation: fadeUp 0.6s ease both; }
+.main-ticker  { animation: fadeUp 0.7s ease 0.1s both; }
+.service-cards{ animation: fadeUp 0.7s ease 0.2s both; }
+.japan-ticker { animation: fadeUp 0.7s ease 0.3s both; }

@@ -1,0 +1,22 @@
+{
+  "lastUpdated": "2025-12-01",
+  "dataSource": "DISR Resources and Energy Quarterly December 2025",
+  "dataSourceUrl": "https://www.industry.gov.au/publications/resources-and-energy-quarterly-december-2025",
+  "counterStartDate": "2025-05-03T00:00:00+10:00",
+  "annualExportVolumeTonnes": 79200000,
+  "annualExportValueAUD": 65000000000,
+  "taxRatePercent": 25,
+  "japanSharePercent": 32,
+  "japanLngTaxYenPerTonne": 1860,
+  "fallbackAudPerJpy": 0.0102,
+  "cardCosts": {
+    "school":          { "label": "New public schools built",             "unit": "school",     "cost": 59000000  },
+    "police":          { "label": "Police officers funded (1 year)",      "unit": "officer",    "cost": 130000    },
+    "nurse":           { "label": "Registered nurses funded (1 year)",    "unit": "nurse",      "cost": 120000    },
+    "agedCare":        { "label": "Aged care places funded (1 year)",     "unit": "place",      "cost": 157000    },
+    "hospitalBedDay":  { "label": "Public hospital bed-days funded",      "unit": "bed-day",    "cost": 2200      },
+    "socialHousing":   { "label": "Social housing units built",           "unit": "home",       "cost": 500000    },
+    "university":      { "label": "University degrees fully funded",      "unit": "degree",     "cost": 45000     },
+    "solarMW":         { "label": "Megawatts of solar installed",         "unit": "MW",         "cost": 1500000   }
+  }
+}

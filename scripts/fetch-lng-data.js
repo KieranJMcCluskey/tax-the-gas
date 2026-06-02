@@ -77,16 +77,10 @@ async function discoverDataflows() {
     try {
       const res = await fetch(url, { headers: { Accept: 'application/json' } })
       if (!res.ok) { console.warn(`  discovery ${res.status}: ${url}`); continue }
-      const data = await res.json()
-      const flows = data?.Structures?.Dataflows ?? data?.data?.dataflows ?? []
-      const tradeFlows = flows.filter(f => {
-        const id = (f.id || f.agencyID || '').toLowerCase()
-        const name = JSON.stringify(f.names || f.name || '').toLowerCase()
-        return id.includes('merch') || id.includes('trade') || id.includes('export') ||
-               name.includes('merch') || name.includes('trade') || name.includes('export')
-      })
-      console.log(`  Found ${tradeFlows.length} trade-related dataflows from ${url}:`)
-      tradeFlows.forEach(f => console.log(`    ${f.id || JSON.stringify(f)}`))
+      const text = await res.text()
+      // Log a slice of the raw response so we can see the actual shape
+      console.log(`  Raw response (first 3000 chars) from ${url}:`)
+      console.log(text.slice(0, 3000))
       return
     } catch (err) {
       console.warn(`  discovery error: ${err.message}`)

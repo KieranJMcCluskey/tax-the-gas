@@ -42,10 +42,13 @@ function buildUrl(dataflow, sitcCode) {
   return `${ABS_REST_BASE}/data/${dataflow}/${sitcCode}.TOT.TOT.M?${COMMON_PARAMS}`
 }
 
+const FETCH_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': 'tax-the-gas/1.0 (https://github.com/KieranJMcCluskey/tax-the-gas; automated data update)',
+}
+
 async function fetchJSON(url) {
-  const res = await fetch(url, {
-    headers: { Accept: 'application/vnd.sdmx.data+json;version=1.0' },
-  })
+  const res = await fetch(url, { headers: FETCH_HEADERS })
   if (!res.ok) throw new Error(`ABS API ${res.status}: ${url}`)
   return res.json()
 }
@@ -71,7 +74,7 @@ async function discoverDataflows() {
   console.log('\n--- ABS dataflow discovery ---')
   try {
     const res = await fetch(`${ABS_REST_BASE}/dataflow/ABS?format=jsondata`, {
-      headers: { Accept: 'application/json' },
+      headers: FETCH_HEADERS,
     })
     if (!res.ok) { console.warn(`  discovery ${res.status}`); return }
     const json = await res.json()

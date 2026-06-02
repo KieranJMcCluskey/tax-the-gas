@@ -15,28 +15,28 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CONFIG_PATH = path.resolve(__dirname, '../src/data/lng-config.json')
 
-// ABS Data Explorer API
-// URL changed Nov 2024: api.data.abs.gov.au/data → data.api.abs.gov.au/rest/data
-// Dataflow ID format changed: ABS,MERCH_EXP → possibly ABS_MERCH_EXP or renamed entirely
+// ABS Data Explorer API (data.api.abs.gov.au/rest)
+// Dataflow: MERCH_EXP (agencyID=ABS, version=1.0.0)
+// Dimensions: COMMODITY_SITC . COUNTRY_DEST . STATE_ORIGIN . FREQ
+// SITC codes for LNG: 3431 (primary) or 3413 (fallback)
+// Dataset reports AUD value only (no separate volume series)
+// Frequency is monthly (M), not quarterly
 const ABS_REST_BASE = 'https://data.api.abs.gov.au/rest'
 const COMMON_PARAMS = 'startPeriod=2023&format=jsondata'
 
-// Candidates: (dataflow, sitcRevision, commodityCode) — tried in order until one works
+// Candidates: (dataflow, sitcCode) — tried in order until one works
 const CANDIDATES = [
-  // New-style dataflow IDs (Nov 2024 API) — underscore replaces comma between agency+flow
-  ['ABS_MERCH_EXP', 'M4', '3431'], // SITC Rev 4 (used by ABS from July 2005)
-  ['ABS_MERCH_EXP', 'M3', '3413'], // SITC Rev 3 fallback
-  ['ABS_MERCH_EXP,1.0.0', 'M4', '3431'],
-  ['ABS_MERCH_EXP,1.0.0', 'M3', '3413'],
-  // Old-style dataflow IDs (pre-Nov 2024 API)
-  ['ABS,MERCH_EXP', 'M4', '3431'],
-  ['ABS,MERCH_EXP', 'M3', '3413'],
-  ['ABS,MERCH_EXP,1.0.0', 'M4', '3431'],
-  ['ABS,MERCH_EXP,1.0.0', 'M3', '3413'],
+  ['ABS,MERCH_EXP,1.0.0', '3431'], // SITC LNG (primary), standard SDMX agency,id,version
+  ['ABS,MERCH_EXP,1.0.0', '3413'], // SITC LNG (fallback code)
+  ['ABS,MERCH_EXP', '3431'],
+  ['ABS,MERCH_EXP', '3413'],
+  ['MERCH_EXP', '3431'],
+  ['MERCH_EXP', '3413'],
 ]
 
-function buildUrl(dataflow, sitcRev, commodity, measure) {
-  return `${ABS_REST_BASE}/data/${dataflow}/${sitcRev}.${commodity}.${measure}.AUS.Q?${COMMON_PARAMS}`
+function buildUrl(dataflow, sitcCode) {
+  // Key: COMMODITY_SITC.COUNTRY_DEST.STATE_ORIGIN.FREQ
+  return `${ABS_REST_BASE}/data/${dataflow}/${sitcCode}.TOT.TOT.M?${COMMON_PARAMS}`
 }
 
 async function fetchJSON(url) {
@@ -47,16 +47,13 @@ async function fetchJSON(url) {
   return res.json()
 }
 
-async function fetchPair() {
-  for (const [dataflow, sitcRev, commodity] of CANDIDATES) {
-    const valueUrl = buildUrl(dataflow, sitcRev, commodity, '1')
+async function fetchValue() {
+  for (const [dataflow, sitcCode] of CANDIDATES) {
+    const url = buildUrl(dataflow, sitcCode)
     try {
-      const valueData = await fetchJSON(valueUrl)
-      console.log(`  ✓ value fetched (${dataflow}, ${sitcRev}.${commodity})`)
-      const volumeUrl = buildUrl(dataflow, sitcRev, commodity, '2')
-      const volumeData = await fetchJSON(volumeUrl)
-      console.log(`  ✓ volume fetched`)
-      return { valueData, volumeData }
+      const data = await fetchJSON(url)
+      console.log(`  ✓ value fetched (${dataflow}, SITC ${sitcCode})`)
+      return data
     } catch (err) {
       console.warn(`  ✗ ${err.message}`)
     }
@@ -90,7 +87,7 @@ async function discoverDataflows() {
   console.log('--- end discovery ---\n')
 }
 
-function sumLatestFourQuarters(data) {
+function sumLatestTwelveMonths(data) {
   const seriesMap = data?.dataSets?.[0]?.series
   if (!seriesMap) throw new Error('Unexpected ABS response shape — missing dataSets[0].series')
 
@@ -101,7 +98,7 @@ function sumLatestFourQuarters(data) {
   const periods = Object.keys(obs)
     .map(Number)
     .sort((a, b) => a - b)
-    .slice(-4)
+    .slice(-12)
 
   if (periods.length === 0) throw new Error('ABS returned no observation periods')
   return periods.reduce((sum, k) => sum + (obs[k][0] ?? 0), 0)
@@ -112,23 +109,21 @@ async function main() {
 
   try {
     console.log('Fetching ABS LNG export data...')
-    const { valueData, volumeData } = await fetchPair()
+    const valueData = await fetchValue()
 
-    const annualValueAUD = sumLatestFourQuarters(valueData) * 1_000_000 // ABS reports in $M
-    const annualVolumeTonnes = sumLatestFourQuarters(volumeData) * 1_000 // ABS reports in '000 tonnes
+    // MERCH_EXP reports in AUD (not millions) — monthly data, sum 12 months for annual
+    const annualValueAUD = sumLatestTwelveMonths(valueData)
 
-    if (annualValueAUD <= 0 || annualVolumeTonnes <= 0) {
+    if (annualValueAUD <= 0) {
       throw new Error('ABS returned zero values — data may not be published yet')
     }
 
     const today = new Date().toISOString().split('T')[0]
     config.annualExportValueAUD = Math.round(annualValueAUD)
-    config.annualExportVolumeTonnes = Math.round(annualVolumeTonnes)
     config.lastUpdated = today
     config.dataSource = `ABS International Merchandise Exports (auto-updated ${today})`
 
     console.log(`✓ Value: AUD $${(annualValueAUD / 1e9).toFixed(1)}B`)
-    console.log(`✓ Volume: ${(annualVolumeTonnes / 1e6).toFixed(1)}M tonnes`)
   } catch (err) {
     console.error('ABS fetch failed:', err.message)
     console.log('Falling back to existing config — no changes written')

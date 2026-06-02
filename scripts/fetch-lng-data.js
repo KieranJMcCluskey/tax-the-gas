@@ -25,9 +25,12 @@ const ABS_REST_BASE = 'https://data.api.abs.gov.au/rest'
 const COMMON_PARAMS = 'startPeriod=2023&format=jsondata'
 
 // Candidates: (dataflow, sitcCode) — tried in order until one works
+// Version in the REST API uses "1.0" format (not "1.0.0" as in the XML catalog)
 const CANDIDATES = [
-  ['ABS,MERCH_EXP,1.0.0', '3431'], // SITC LNG (primary), standard SDMX agency,id,version
-  ['ABS,MERCH_EXP,1.0.0', '3413'], // SITC LNG (fallback code)
+  ['ABS,MERCH_EXP,1.0', '3431'],
+  ['ABS,MERCH_EXP,1.0', '3413'],
+  ['ABS,MERCH_EXP,1.0.0', '3431'],
+  ['ABS,MERCH_EXP,1.0.0', '3413'],
   ['ABS,MERCH_EXP', '3431'],
   ['ABS,MERCH_EXP', '3413'],
   ['MERCH_EXP', '3431'],
@@ -65,25 +68,31 @@ async function fetchValue() {
 }
 
 async function discoverDataflows() {
-  console.log('\n--- ABS dataflow discovery (to identify correct ID) ---')
-  const discoveryUrls = [
-    `${ABS_REST_BASE}/dataflow/ABS?format=jsondata`,
-    `${ABS_REST_BASE}/dataflow?format=jsondata`,
-  ]
-  for (const url of discoveryUrls) {
-    try {
-      const res = await fetch(url, { headers: { Accept: 'application/json' } })
-      if (!res.ok) { console.warn(`  discovery ${res.status}: ${url}`); continue }
-      const text = await res.text()
-      // Log a slice of the raw response so we can see the actual shape
-      console.log(`  Raw response (first 3000 chars) from ${url}:`)
-      console.log(text.slice(0, 3000))
-      return
-    } catch (err) {
-      console.warn(`  discovery error: ${err.message}`)
+  console.log('\n--- ABS dataflow discovery ---')
+  try {
+    const res = await fetch(`${ABS_REST_BASE}/dataflow/ABS?format=jsondata`, {
+      headers: { Accept: 'application/json' },
+    })
+    if (!res.ok) { console.warn(`  discovery ${res.status}`); return }
+    const json = await res.json()
+
+    // Search for any MERCH_EXP dataflow in the references map
+    const refs = json.references ?? {}
+    const matches = Object.values(refs).filter(df => df.id?.includes('MERCH'))
+    if (matches.length > 0) {
+      console.log('  MERCH-related dataflows found:')
+      for (const df of matches) {
+        console.log(`    id=${df.id} version=${df.version} agencyID=${df.agencyID}`)
+      }
+    } else {
+      console.log('  No MERCH dataflows found in ABS catalog')
+      // Log a sample of what IS available
+      const sample = Object.values(refs).slice(0, 5).map(df => `${df.agencyID},${df.id},${df.version}`)
+      console.log('  Sample dataflows:', sample.join(' | '))
     }
+  } catch (err) {
+    console.warn(`  discovery error: ${err.message}`)
   }
-  console.log('  Discovery failed — please check https://data.api.abs.gov.au/rest/dataflow/ABS manually')
   console.log('--- end discovery ---\n')
 }
 

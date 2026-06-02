@@ -17,8 +17,9 @@ const CONFIG_PATH = path.resolve(__dirname, '../src/data/lng-config.json')
 
 // ABS Data Explorer API — International Merchandise Exports, SITC Rev 3
 // Commodity 3413 = Liquefied natural gas, measure 1 = export value (AUD), measure 2 = volume (tonnes)
+// URL changed Nov 2024: api.data.abs.gov.au/data → data.api.abs.gov.au/rest/data
 // Try without version first (resolves to latest), then fall back to known versions.
-const ABS_BASE = 'https://api.data.abs.gov.au/data'
+const ABS_BASE = 'https://data.api.abs.gov.au/rest/data'
 const ABS_DATAFLOW_CANDIDATES = ['ABS,MERCH_EXP', 'ABS,MERCH_EXP,1.0.0']
 const COMMON_PARAMS = 'startPeriod=2023&format=jsondata'
 

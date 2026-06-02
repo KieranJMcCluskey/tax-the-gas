@@ -16,12 +16,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CONFIG_PATH = path.resolve(__dirname, '../src/data/lng-config.json')
 
 // ABS Data Explorer API — International Merchandise Exports, SITC Rev 3
-// Commodity 3413 = Liquefied natural gas, measure = export value (AUD) + volume (tonnes)
-const ABS_VALUE_URL =
-  'https://api.data.abs.gov.au/data/ABS,MERCH_EXP,1.0.0/M3.3413.1.AUS.Q?startPeriod=2023&format=jsondata'
+// Commodity 3413 = Liquefied natural gas, measure 1 = export value (AUD), measure 2 = volume (tonnes)
+// Try without version first (resolves to latest), then fall back to known versions.
+const ABS_BASE = 'https://api.data.abs.gov.au/data'
+const ABS_DATAFLOW_CANDIDATES = ['ABS,MERCH_EXP', 'ABS,MERCH_EXP,1.0.0']
+const COMMON_PARAMS = 'startPeriod=2023&format=jsondata'
 
-const ABS_VOLUME_URL =
-  'https://api.data.abs.gov.au/data/ABS,MERCH_EXP,1.0.0/M3.3413.2.AUS.Q?startPeriod=2023&format=jsondata'
+function buildUrls(measure) {
+  return ABS_DATAFLOW_CANDIDATES.map(
+    (df) => `${ABS_BASE}/${df}/M3.3413.${measure}.AUS.Q?${COMMON_PARAMS}`
+  )
+}
 
 async function fetchJSON(url) {
   const res = await fetch(url, {
@@ -31,15 +36,37 @@ async function fetchJSON(url) {
   return res.json()
 }
 
+async function fetchWithFallback(urls) {
+  let lastErr
+  for (const url of urls) {
+    try {
+      const data = await fetchJSON(url)
+      console.log(`  ✓ fetched from ${url}`)
+      return data
+    } catch (err) {
+      console.warn(`  ✗ ${err.message}`)
+      lastErr = err
+    }
+  }
+  throw lastErr
+}
+
 function sumLatestFourQuarters(data) {
-  // Extract observations sorted by period, take the 4 most recent quarters
-  const obs = data?.dataSets?.[0]?.series?.['0:0:0:0:0']?.observations
-  if (!obs) throw new Error('Unexpected ABS response shape')
+  // SDMX-JSON: observations are keyed by dimension index under series
+  const seriesMap = data?.dataSets?.[0]?.series
+  if (!seriesMap) throw new Error('Unexpected ABS response shape — missing dataSets[0].series')
+
+  // The series key encodes dimension indices; grab the first (and typically only) series
+  const seriesKey = Object.keys(seriesMap)[0]
+  const obs = seriesMap[seriesKey]?.observations
+  if (!obs) throw new Error(`Unexpected ABS response shape — no observations under series key "${seriesKey}"`)
 
   const periods = Object.keys(obs)
     .map(Number)
     .sort((a, b) => a - b)
     .slice(-4)
+
+  if (periods.length === 0) throw new Error('ABS returned no observation periods')
 
   return periods.reduce((sum, k) => sum + (obs[k][0] ?? 0), 0)
 }
@@ -50,11 +77,11 @@ async function main() {
 
   try {
     console.log('Fetching ABS LNG export value...')
-    const valueData = await fetchJSON(ABS_VALUE_URL)
+    const valueData = await fetchWithFallback(buildUrls(1))
     const annualValueAUD = sumLatestFourQuarters(valueData) * 1_000_000 // ABS reports in $M
 
     console.log('Fetching ABS LNG export volume...')
-    const volumeData = await fetchJSON(ABS_VOLUME_URL)
+    const volumeData = await fetchWithFallback(buildUrls(2))
     const annualVolumeTonnes = sumLatestFourQuarters(volumeData) * 1_000 // ABS reports in '000 tonnes
 
     if (annualValueAUD > 0 && annualVolumeTonnes > 0) {

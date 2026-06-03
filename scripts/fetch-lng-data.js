@@ -107,6 +107,7 @@ async function fetchFromCSV() {
   let sitcIdx, countryIdx, stateIdx, freqIdx, periodIdx, valueIdx
   const lngObs = {}
   let rowCount = 0
+  const sampleSitc = new Set(), sampleCountry = new Set(), sampleFreq = new Set()
 
   for await (const line of rl) {
     if (!line.trim()) continue
@@ -128,11 +129,27 @@ async function fetchFromCSV() {
     }
 
     rowCount++
-    const sitc = cols[sitcIdx]
+    const sitc    = cols[sitcIdx]
+    const country = countryIdx >= 0 ? cols[countryIdx] : ''
+    const state   = stateIdx   >= 0 ? cols[stateIdx]   : ''
+    const freq    = freqIdx    >= 0 ? cols[freqIdx]    : ''
+
+    // Collect sample values from the first 500 rows to diagnose code formats
+    if (rowCount <= 500) {
+      sampleSitc.add(sitc)
+      sampleCountry.add(country)
+      sampleFreq.add(freq)
+    }
+    if (rowCount === 500) {
+      console.log(`  Sample COMMODITY_SITC values: ${[...sampleSitc].slice(0, 15).join(', ')}`)
+      console.log(`  Sample COUNTRY_DEST values:   ${[...sampleCountry].slice(0, 10).join(', ')}`)
+      console.log(`  Sample FREQ values:           ${[...sampleFreq].join(', ')}`)
+    }
+
     if (!LNG_SITC_CODES.includes(sitc)) continue
-    if (countryIdx >= 0 && cols[countryIdx] !== 'TOT') continue
-    if (stateIdx   >= 0 && cols[stateIdx]   !== 'TOT') continue
-    if (freqIdx    >= 0 && cols[freqIdx]     !== 'M')   continue
+    if (country && country !== 'TOT') continue
+    if (state   && state   !== 'TOT') continue
+    if (freq    && freq    !== 'M')   continue
 
     const period = cols[periodIdx]
     const value  = parseFloat(cols[valueIdx])

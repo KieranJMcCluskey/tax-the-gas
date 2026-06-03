@@ -1,11 +1,10 @@
 /**
- * Fetches the latest Australian LNG export data from the ABS and updates
- * src/data/lng-config.json.
+ * Fetches the latest Australian LNG export data and updates src/data/lng-config.json.
  *
- * Dataset: MERCH_EXP (ABS International Merchandise Exports)
- * Base URL: https://data.api.abs.gov.au/rest/data/
- * DSD key order: FREQ . COMMODITY_SITC . COUNTRY_DEST . STATE_ORIGIN
- * SITC 3431 (Rev 4) / 3413 (Rev 3) = Liquefied natural gas
+ * Primary:  DISR Resources and Energy Quarterly historical data Excel
+ *           URL pattern: https://www.industry.gov.au/sites/default/files/YYYY-MM/
+ *                        resources-and-energy-quarterly-MONTH-YYYY-historical-data.xlsx
+ * Fallback: ABS MERCH_EXP bulk CSV (streaming, ~4.5 GB)
  *
  * Runs via GitHub Actions quarterly — see .github/workflows/update-lng-data.yml
  */
@@ -15,6 +14,7 @@ import path from 'path'
 import readline from 'readline'
 import { fileURLToPath } from 'url'
 import { Readable } from 'stream'
+import * as XLSX from 'xlsx'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CONFIG_PATH = path.resolve(__dirname, '../src/data/lng-config.json')
@@ -24,75 +24,156 @@ const FETCH_HEADERS = {
   'User-Agent': 'tax-the-gas/1.0 (https://github.com/KieranJMcCluskey/tax-the-gas; automated data update)',
 }
 
-const LNG_SITC_CODES = ['3431', '3413']
+// --- DISR Resources and Energy Quarterly (primary) ---
 
-// --- SDMX REST (primary) ---
-// ABS DSD dimension order for MERCH_EXP: FREQ . COMMODITY_SITC . COUNTRY_DEST . STATE_ORIGIN
-
-const ABS_BASE = 'https://data.api.abs.gov.au/rest/data'
-
-const REST_CANDIDATES = [
-  // FREQ first (standard ABS DSD ordering)
-  'ABS,MERCH_EXP,1.0.0/M.3431.TOT.TOT',
-  'ABS,MERCH_EXP,1.0.0/M.3413.TOT.TOT',
-  'ABS,MERCH_EXP,1.0/M.3431.TOT.TOT',
-  'ABS,MERCH_EXP,1.0/M.3413.TOT.TOT',
-  // COMMODITY_SITC first (as per layout annotation)
-  'ABS,MERCH_EXP,1.0.0/3431.TOT.TOT.M',
-  'ABS,MERCH_EXP,1.0.0/3413.TOT.TOT.M',
-  // Wildcard — fetch all series and filter client-side
-  'ABS,MERCH_EXP,1.0.0/all',
+const QUARTER_MONTHS = [
+  { month: 3,  name: 'march' },
+  { month: 6,  name: 'june' },
+  { month: 9,  name: 'september' },
+  { month: 12, name: 'december' },
 ]
 
-async function fetchFromREST() {
-  for (const candidate of REST_CANDIDATES) {
-    const url = `${ABS_BASE}/${candidate}?startPeriod=2023&format=jsondata`
-    try {
-      const res = await fetch(url, { headers: FETCH_HEADERS })
-      if (!res.ok) { console.warn(`  ✗ REST ${res.status}: ${url}`); continue }
-      const data = await res.json()
+function recentDISRUrls() {
+  // Build candidate URLs for the last 3 quarterly releases
+  const now = new Date()
+  const urls = []
+  let year = now.getFullYear()
+  let qi = QUARTER_MONTHS.findIndex(q => now.getMonth() + 1 <= q.month)
+  if (qi < 0) qi = 3 // past December, start from December this year
 
-      const seriesMap = data?.dataSets?.[0]?.series
-      if (!seriesMap || Object.keys(seriesMap).length === 0) {
-        console.warn(`  ✗ REST empty series: ${url}`)
-        continue
-      }
-
-      // If we used the wildcard, find the LNG series by inspecting dimension values
-      const dimensions = data?.structure?.dimensions?.series ?? []
-      const sitcDimIdx = dimensions.findIndex(d =>
-        d.id?.toUpperCase().includes('COMMODITY') || d.id?.toUpperCase().includes('SITC')
-      )
-
-      let targetKey = Object.keys(seriesMap)[0]
-      if (sitcDimIdx >= 0 && candidate.includes('/all')) {
-        const lngEntry = Object.entries(seriesMap).find(([key]) => {
-          const parts = key.split(':')
-          const sitcValIdx = parseInt(parts[sitcDimIdx] ?? '-1')
-          const sitcValues = dimensions[sitcDimIdx]?.values ?? []
-          const sitcCode = sitcValues[sitcValIdx]?.id ?? ''
-          return LNG_SITC_CODES.includes(sitcCode)
-        })
-        if (!lngEntry) { console.warn(`  ✗ REST wildcard: no LNG series found`); continue }
-        targetKey = lngEntry[0]
-        console.log(`  ✓ REST wildcard matched series key: ${targetKey}`)
-      }
-
-      const obs = seriesMap[targetKey]?.observations
-      if (!obs) { console.warn(`  ✗ REST no observations`); continue }
-
-      const periods = Object.keys(obs).map(Number).sort((a, b) => a - b).slice(-12)
-      const total = periods.reduce((sum, k) => sum + (obs[k][0] ?? 0), 0)
-      console.log(`  ✓ REST: ${candidate} (${periods.length} months)`)
-      return total
-    } catch (err) {
-      console.warn(`  ✗ REST error (${candidate}): ${err.message}`)
-    }
+  for (let i = 0; i < 3; i++) {
+    qi--
+    if (qi < 0) { qi = 3; year-- }
+    const { month, name } = QUARTER_MONTHS[qi]
+    const mm = String(month).padStart(2, '0')
+    const base = `https://www.industry.gov.au/sites/default/files/${year}-${mm}`
+    urls.push(`${base}/resources-and-energy-quarterly-${name}-${year}-historical-data.xlsx`)
   }
-  throw new Error('All REST candidates failed')
+  return urls
 }
 
-// RFC 4180 CSV parser — handles quoted fields containing commas and escaped quotes
+async function fetchFromDISR() {
+  const urls = recentDISRUrls()
+  for (const url of urls) {
+    console.log(`  Trying DISR: ${url}`)
+    try {
+      const res = await fetch(url, { headers: FETCH_HEADERS })
+      if (!res.ok) { console.warn(`  ✗ DISR ${res.status}: ${url}`); continue }
+
+      const buffer = Buffer.from(await res.arrayBuffer())
+      const wb = XLSX.read(buffer, { type: 'buffer' })
+
+      console.log(`  ✓ Downloaded. Sheets: ${wb.SheetNames.join(', ')}`)
+
+      // Find the LNG sheet
+      const lngSheet = wb.SheetNames.find(n =>
+        /lng/i.test(n) || /liquefied/i.test(n)
+      )
+      if (!lngSheet) {
+        console.warn(`  ✗ No LNG sheet found. Sheets: ${wb.SheetNames.join(', ')}`)
+        continue
+      }
+      console.log(`  Using sheet: "${lngSheet}"`)
+
+      const ws = wb.Sheets[lngSheet]
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null })
+
+      // Log first 10 rows to diagnose structure on first run
+      console.log('  Sheet preview (first 10 rows):')
+      rows.slice(0, 10).forEach((r, i) => console.log(`    [${i}] ${JSON.stringify(r)}`))
+
+      const result = extractLNGValue(rows)
+      if (result) return result
+
+      console.warn('  ✗ Could not extract LNG value from sheet')
+    } catch (err) {
+      console.warn(`  ✗ DISR error: ${err.message}`)
+    }
+  }
+  throw new Error('All DISR URL candidates failed')
+}
+
+function extractLNGValue(rows) {
+  // Look for an "Export value" or "Export earnings" row with AUD data
+  // DISR REQ sheets typically have:
+  //   - A header section with labels in column A
+  //   - Years or quarters in row headers
+  //   - Values in AUD billion or AUD million
+
+  // Find the row index containing "export value" or "export earnings"
+  const exportValueRowIdx = rows.findIndex(r =>
+    r.some(cell => typeof cell === 'string' &&
+      /(export.*(value|earning|revenue)|value.*export)/i.test(cell))
+  )
+
+  if (exportValueRowIdx < 0) {
+    // Log all row labels to help diagnose
+    const labels = rows.map((r, i) => `[${i}] ${r[0]}`).filter(l => l[l.length-1])
+    console.warn(`  Could not find export value row. Row labels: ${labels.slice(0, 30).join(' | ')}`)
+    return null
+  }
+
+  const exportRow = rows[exportValueRowIdx]
+  console.log(`  Export value row [${exportValueRowIdx}]: ${JSON.stringify(exportRow)}`)
+
+  // Find the header row (contains years like 2023, 2024, 2025)
+  const headerRowIdx = rows.slice(0, exportValueRowIdx).findLastIndex(r =>
+    r.filter(c => typeof c === 'number' && c > 2000 && c < 2040).length >= 3
+  )
+
+  let unit = 'billion' // default assumption
+  // Look for unit indicator near the export value row
+  for (let i = Math.max(0, exportValueRowIdx - 5); i <= exportValueRowIdx; i++) {
+    const rowStr = JSON.stringify(rows[i]).toLowerCase()
+    if (rowStr.includes('million')) unit = 'million'
+    if (rowStr.includes('billion')) unit = 'billion'
+  }
+  console.log(`  Detected unit: AUD ${unit}`)
+
+  if (headerRowIdx >= 0) {
+    const headerRow = rows[headerRowIdx]
+    console.log(`  Header row [${headerRowIdx}]: ${JSON.stringify(headerRow)}`)
+
+    // Find the most recent year column
+    let bestColIdx = -1
+    let bestYear = 0
+    headerRow.forEach((cell, i) => {
+      const yr = typeof cell === 'number' ? cell : parseInt(cell)
+      if (yr > 2020 && yr < 2040 && yr > bestYear) {
+        bestYear = yr
+        bestColIdx = i
+      }
+    })
+
+    if (bestColIdx >= 0) {
+      const value = parseFloat(exportRow[bestColIdx])
+      if (!isNaN(value) && value > 0) {
+        console.log(`  ✓ Export value for ${bestYear}: AUD ${value} ${unit}`)
+        const multiplier = unit === 'billion' ? 1e9 : 1e6
+        return Math.round(value * multiplier)
+      }
+    }
+  }
+
+  // Fallback: take the last non-null numeric value in the export row
+  const numericValues = exportRow
+    .map((v, i) => ({ v: parseFloat(v), i }))
+    .filter(({ v }) => !isNaN(v) && v > 0)
+  if (numericValues.length > 0) {
+    const last = numericValues[numericValues.length - 1]
+    console.log(`  Fallback: last numeric value in export row: ${last.v} (col ${last.i})`)
+    const multiplier = unit === 'billion' ? 1e9 : 1e6
+    return Math.round(last.v * multiplier)
+  }
+
+  return null
+}
+
+// --- ABS CSV fallback (streams ~4.5 GB line by line) ---
+
+const ABS_CSV_URL = 'https://data.api.abs.gov.au/files/ABS_MERCH_EXP_1.0.0.csv'
+const LNG_SITC_CODES = ['3431', '3413']
+
 function parseCSVLine(line) {
   const fields = []
   let cur = ''
@@ -100,7 +181,7 @@ function parseCSVLine(line) {
   for (let i = 0; i < line.length; i++) {
     const ch = line[i]
     if (inQuote) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++ } // escaped quote
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++ }
       else if (ch === '"') { inQuote = false }
       else { cur += ch }
     } else {
@@ -113,14 +194,10 @@ function parseCSVLine(line) {
   return fields
 }
 
-// --- CSV streaming fallback (file is ~4.5 GB, must stream line by line) ---
-
-const CSV_URL = 'https://data.api.abs.gov.au/files/ABS_MERCH_EXP_1.0.0.csv'
-
-async function fetchFromCSV() {
-  console.log(`  Streaming CSV: ${CSV_URL}`)
-  const res = await fetch(CSV_URL, { headers: FETCH_HEADERS })
-  if (!res.ok) throw new Error(`CSV download ${res.status}: ${CSV_URL}`)
+async function fetchFromABSCSV() {
+  console.log(`  Streaming ABS CSV: ${ABS_CSV_URL}`)
+  const res = await fetch(ABS_CSV_URL, { headers: FETCH_HEADERS })
+  if (!res.ok) throw new Error(`ABS CSV ${res.status}: ${ABS_CSV_URL}`)
 
   const rl = readline.createInterface({ input: Readable.fromWeb(res.body), crlfDelay: Infinity })
 
@@ -128,8 +205,7 @@ async function fetchFromCSV() {
   let sitcIdx, countryIdx, stateIdx, freqIdx, periodIdx, valueIdx
   const lngObs = {}
   let rowCount = 0
-  const sampleSitc = new Set(), sampleCountry = new Set(), sampleFreq = new Set()
-  const allSitcCodes = new Set() // collect all unique SITC codes for diagnosis
+  const allSitcCodes = new Set()
 
   for await (const line of rl) {
     if (!line.trim()) continue
@@ -137,12 +213,12 @@ async function fetchFromCSV() {
 
     if (!headers) {
       headers = cols.map(h => h.toUpperCase())
-      sitcIdx    = headers.findIndex(h => h.includes('COMMODITY_SITC') || h === 'SITC')
-      countryIdx = headers.findIndex(h => h.includes('COUNTRY_DEST') || h === 'COUNTRY')
-      stateIdx   = headers.findIndex(h => h.includes('STATE_ORIGIN') || h === 'STATE')
-      freqIdx    = headers.findIndex(h => h === 'FREQ' || h === 'FREQUENCY')
-      periodIdx  = headers.findIndex(h => h.includes('TIME_PERIOD') || h === 'PERIOD')
-      valueIdx   = headers.findIndex(h => h.includes('OBS_VALUE') || h === 'VALUE')
+      sitcIdx    = headers.findIndex(h => h === 'COMMODITY_SITC')
+      countryIdx = headers.findIndex(h => h === 'COUNTRY_DEST')
+      stateIdx   = headers.findIndex(h => h === 'STATE_ORIGIN')
+      freqIdx    = headers.findIndex(h => h === 'FREQ')
+      periodIdx  = headers.findIndex(h => h === 'TIME_PERIOD')
+      valueIdx   = headers.findIndex(h => h === 'OBS_VALUE')
       console.log(`  CSV columns: ${cols.join(', ')}`)
       if (sitcIdx < 0 || periodIdx < 0 || valueIdx < 0) {
         throw new Error(`Missing required CSV columns. Headers: ${cols.join(', ')}`)
@@ -151,28 +227,13 @@ async function fetchFromCSV() {
     }
 
     rowCount++
-    const sitc    = cols[sitcIdx]
-    const country = countryIdx >= 0 ? cols[countryIdx] : ''
-    const state   = stateIdx   >= 0 ? cols[stateIdx]   : ''
-    const freq    = freqIdx    >= 0 ? cols[freqIdx]    : ''
-
-    // Collect sample values from the first 500 rows to diagnose code formats
-    if (rowCount <= 500) {
-      sampleSitc.add(sitc)
-      sampleCountry.add(country)
-      sampleFreq.add(freq)
-    }
-    if (rowCount === 500) {
-      console.log(`  Sample COMMODITY_SITC values: ${[...sampleSitc].slice(0, 15).join(', ')}`)
-      console.log(`  Sample COUNTRY_DEST values:   ${[...sampleCountry].slice(0, 10).join(', ')}`)
-      console.log(`  Sample FREQ values:           ${[...sampleFreq].join(', ')}`)
-    }
-
+    const sitc = cols[sitcIdx]
     if (allSitcCodes.size < 500) allSitcCodes.add(sitc)
+
     if (!LNG_SITC_CODES.includes(sitc)) continue
-    if (country && country !== 'TOT') continue
-    if (state   && state   !== 'TOT') continue
-    if (freq    && freq    !== 'M')   continue
+    if (countryIdx >= 0 && cols[countryIdx] !== 'TOT') continue
+    if (stateIdx   >= 0 && cols[stateIdx]   !== 'TOT') continue
+    if (freqIdx    >= 0 && cols[freqIdx]     !== 'M')   continue
 
     const period = cols[periodIdx]
     const value  = parseFloat(cols[valueIdx])
@@ -180,21 +241,17 @@ async function fetchFromCSV() {
   }
 
   console.log(`  Scanned ${rowCount.toLocaleString()} rows, found ${Object.keys(lngObs).length} LNG months`)
+
   if (Object.keys(lngObs).length === 0) {
-    // Log all unique SITC codes seen — look for anything resembling LNG/gas/34xx
     const sitcList = [...allSitcCodes].sort()
-    console.log(`  All unique COMMODITY_SITC codes (${sitcList.length}): ${sitcList.join(', ')}`)
-    // Also highlight any that look like gas/petroleum
-    const gasCodes = sitcList.filter(c => c.startsWith('3') || c.toLowerCase().includes('gas') || c.toLowerCase().includes('lng'))
-    if (gasCodes.length) console.log(`  Petroleum/gas-related codes: ${gasCodes.join(', ')}`)
-    throw new Error('No LNG observations found in CSV')
+    console.log(`  Unique COMMODITY_SITC codes: ${sitcList.join(', ')}`)
+    throw new Error('No LNG observations found in ABS CSV')
   }
 
   const latest12 = Object.entries(lngObs)
     .sort(([a], [b]) => b.localeCompare(a))
     .slice(0, 12)
-
-  console.log(`  Period range: ${latest12[latest12.length-1][0]} – ${latest12[0][0]}`)
+  console.log(`  Period range: ${latest12[latest12.length - 1][0]} – ${latest12[0][0]}`)
   return latest12.reduce((sum, [, v]) => sum + v, 0)
 }
 
@@ -205,37 +262,40 @@ async function main() {
 
   let annualValueAUD
   try {
-    console.log('Fetching ABS LNG export data...')
+    console.log('Fetching LNG export data...')
+
     try {
-      annualValueAUD = await fetchFromREST()
-      console.log('  ✓ Source: SDMX REST API')
-    } catch (restErr) {
-      console.warn(`  REST failed: ${restErr.message}`)
-      console.log('  Trying CSV streaming fallback...')
-      annualValueAUD = await fetchFromCSV()
-      console.log('  ✓ Source: ABS bulk CSV')
+      annualValueAUD = await fetchFromDISR()
+      console.log('  ✓ Source: DISR Resources and Energy Quarterly')
+    } catch (disrErr) {
+      console.warn(`  DISR failed: ${disrErr.message}`)
+      console.log('  Trying ABS CSV fallback...')
+      try {
+        annualValueAUD = await fetchFromABSCSV()
+        console.log('  ✓ Source: ABS MERCH_EXP CSV')
+      } catch (absErr) {
+        const isTransient = absErr.message.includes('403') || absErr.message.includes('ECONNREFUSED')
+        if (isTransient) {
+          console.warn('Transient network error — keeping existing config, will retry next quarter')
+          process.exit(0)
+        }
+        throw absErr
+      }
     }
 
     if (annualValueAUD <= 0) {
-      throw new Error('ABS returned zero or negative value — data may not be published yet')
+      throw new Error('Fetched value is zero or negative — data may not be published yet')
     }
 
     const today = new Date().toISOString().split('T')[0]
     config.annualExportValueAUD = Math.round(annualValueAUD)
     config.lastUpdated = today
-    config.dataSource = `ABS International Merchandise Exports (auto-updated ${today})`
+    config.dataSource = `DISR Resources and Energy Quarterly (auto-updated ${today})`
 
     console.log(`✓ Annual LNG export value: AUD $${(annualValueAUD / 1e9).toFixed(1)}B`)
   } catch (err) {
-    // Treat 403 (IP block) and network errors as transient — don't fail the action,
-    // just keep the existing config and try again next quarter.
-    const isTransient = err.message.includes('403') || err.message.includes('ECONNREFUSED') || err.message.includes('network')
-    console.error('ABS fetch failed:', err.message)
-    if (isTransient) {
-      console.log('Transient error (likely ABS IP block) — keeping existing config, will retry next quarter')
-      process.exit(0)
-    }
-    console.log('Falling back to existing config — no changes written')
+    console.error('Fetch failed:', err.message)
+    console.log('Keeping existing config — no changes written')
     process.exit(1)
   }
 

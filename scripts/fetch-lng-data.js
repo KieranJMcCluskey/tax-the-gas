@@ -129,6 +129,7 @@ async function fetchFromCSV() {
   const lngObs = {}
   let rowCount = 0
   const sampleSitc = new Set(), sampleCountry = new Set(), sampleFreq = new Set()
+  const allSitcCodes = new Set() // collect all unique SITC codes for diagnosis
 
   for await (const line of rl) {
     if (!line.trim()) continue
@@ -167,6 +168,7 @@ async function fetchFromCSV() {
       console.log(`  Sample FREQ values:           ${[...sampleFreq].join(', ')}`)
     }
 
+    if (allSitcCodes.size < 500) allSitcCodes.add(sitc)
     if (!LNG_SITC_CODES.includes(sitc)) continue
     if (country && country !== 'TOT') continue
     if (state   && state   !== 'TOT') continue
@@ -178,7 +180,15 @@ async function fetchFromCSV() {
   }
 
   console.log(`  Scanned ${rowCount.toLocaleString()} rows, found ${Object.keys(lngObs).length} LNG months`)
-  if (Object.keys(lngObs).length === 0) throw new Error('No LNG observations found in CSV')
+  if (Object.keys(lngObs).length === 0) {
+    // Log all unique SITC codes seen — look for anything resembling LNG/gas/34xx
+    const sitcList = [...allSitcCodes].sort()
+    console.log(`  All unique COMMODITY_SITC codes (${sitcList.length}): ${sitcList.join(', ')}`)
+    // Also highlight any that look like gas/petroleum
+    const gasCodes = sitcList.filter(c => c.startsWith('3') || c.toLowerCase().includes('gas') || c.toLowerCase().includes('lng'))
+    if (gasCodes.length) console.log(`  Petroleum/gas-related codes: ${gasCodes.join(', ')}`)
+    throw new Error('No LNG observations found in CSV')
+  }
 
   const latest12 = Object.entries(lngObs)
     .sort(([a], [b]) => b.localeCompare(a))

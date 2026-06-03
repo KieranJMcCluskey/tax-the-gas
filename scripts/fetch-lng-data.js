@@ -92,6 +92,27 @@ async function fetchFromREST() {
   throw new Error('All REST candidates failed')
 }
 
+// RFC 4180 CSV parser — handles quoted fields containing commas and escaped quotes
+function parseCSVLine(line) {
+  const fields = []
+  let cur = ''
+  let inQuote = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuote) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++ } // escaped quote
+      else if (ch === '"') { inQuote = false }
+      else { cur += ch }
+    } else {
+      if (ch === '"') { inQuote = true }
+      else if (ch === ',') { fields.push(cur.trim()); cur = '' }
+      else { cur += ch }
+    }
+  }
+  fields.push(cur.trim())
+  return fields
+}
+
 // --- CSV streaming fallback (file is ~4.5 GB, must stream line by line) ---
 
 const CSV_URL = 'https://data.api.abs.gov.au/files/ABS_MERCH_EXP_1.0.0.csv'
@@ -111,7 +132,7 @@ async function fetchFromCSV() {
 
   for await (const line of rl) {
     if (!line.trim()) continue
-    const cols = line.split(',').map(c => c.replace(/^"|"$/g, '').trim())
+    const cols = parseCSVLine(line)
 
     if (!headers) {
       headers = cols.map(h => h.toUpperCase())

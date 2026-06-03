@@ -227,7 +227,14 @@ async function main() {
 
     console.log(`✓ Annual LNG export value: AUD $${(annualValueAUD / 1e9).toFixed(1)}B`)
   } catch (err) {
+    // Treat 403 (IP block) and network errors as transient — don't fail the action,
+    // just keep the existing config and try again next quarter.
+    const isTransient = err.message.includes('403') || err.message.includes('ECONNREFUSED') || err.message.includes('network')
     console.error('ABS fetch failed:', err.message)
+    if (isTransient) {
+      console.log('Transient error (likely ABS IP block) — keeping existing config, will retry next quarter')
+      process.exit(0)
+    }
     console.log('Falling back to existing config — no changes written')
     process.exit(1)
   }

@@ -239,7 +239,7 @@ async function fetchFromABSCSV() {
   const rl = readline.createInterface({ input: Readable.fromWeb(res.body), crlfDelay: Infinity })
 
   let headers = null
-  let sitcIdx, countryIdx, stateIdx, freqIdx, periodIdx, valueIdx
+  let sitcIdx, countryIdx, stateIdx, freqIdx, periodIdx, valueIdx, unitMultIdx
   const lngObs = {}
   let rowCount = 0
   const allSitcCodes = new Set()
@@ -256,6 +256,7 @@ async function fetchFromABSCSV() {
       freqIdx    = headers.findIndex(h => h === 'FREQ')
       periodIdx  = headers.findIndex(h => h === 'TIME_PERIOD')
       valueIdx   = headers.findIndex(h => h === 'OBS_VALUE')
+      unitMultIdx = headers.findIndex(h => h === 'UNIT_MULT')
       console.log(`  CSV columns: ${cols.join(', ')}`)
       if (sitcIdx < 0 || periodIdx < 0 || valueIdx < 0) {
         throw new Error(`Missing required CSV columns. Headers: ${cols.join(', ')}`)
@@ -272,8 +273,10 @@ async function fetchFromABSCSV() {
     if (stateIdx   >= 0 && cols[stateIdx]   !== 'TOT') continue
     if (freqIdx    >= 0 && cols[freqIdx]     !== 'M')   continue
 
-    const period = cols[periodIdx]
-    const value  = parseFloat(cols[valueIdx])
+    const period   = cols[periodIdx]
+    const rawValue = parseFloat(cols[valueIdx])
+    const unitMult = unitMultIdx >= 0 ? parseInt(cols[unitMultIdx]) || 0 : 0
+    const value    = rawValue * Math.pow(10, unitMult)
     if (period && !isNaN(value)) lngObs[period] = value
   }
 

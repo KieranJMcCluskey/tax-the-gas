@@ -4,7 +4,7 @@
   "dataSourceUrl": "https://www.industry.gov.au/publications/resources-and-energy-quarterly-december-2025",
   "counterStartDate": "2025-05-03T00:00:00+10:00",
   "annualExportVolumeTonnes": 79200000,
-  "annualExportValueAUD": 57608508,
+  "annualExportValueAUD": 57608508000,
   "taxRatePercent": 25,
   "japanSharePercent": 32,
   "japanLngTaxYenPerTonne": 1860,

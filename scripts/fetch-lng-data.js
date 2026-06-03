@@ -169,10 +169,47 @@ function extractLNGValue(rows) {
   return null
 }
 
+// --- ABS REST API (secondary) ---
+// Short-form URL pattern confirmed from ABS worked examples (no agency prefix needed)
+// Dimension order for MERCH_EXP from CSV column order: COMMODITY_SITC.COUNTRY_DEST.STATE_ORIGIN.FREQ
+
+const ABS_REST_BASE = 'https://data.api.abs.gov.au/rest/data'
+const ABS_REST_CANDIDATES = [
+  'MERCH_EXP/343.TOT.TOT.M',
+  'MERCH_EXP/M.343.TOT.TOT',
+  'ABS,MERCH_EXP/343.TOT.TOT.M',
+  'ABS,MERCH_EXP,1.0.0/343.TOT.TOT.M',
+  'ABS,MERCH_EXP/M.343.TOT.TOT',
+]
+
+async function fetchFromABSREST() {
+  for (const candidate of ABS_REST_CANDIDATES) {
+    const url = `${ABS_REST_BASE}/${candidate}?startPeriod=2023&format=jsondata`
+    try {
+      const res = await fetch(url, { headers: FETCH_HEADERS })
+      if (!res.ok) { console.warn(`  ✗ REST ${res.status}: ${url}`); continue }
+      const data = await res.json()
+      const seriesMap = data?.dataSets?.[0]?.series
+      if (!seriesMap || Object.keys(seriesMap).length === 0) {
+        console.warn(`  ✗ REST empty response: ${url}`); continue
+      }
+      const obs = seriesMap[Object.keys(seriesMap)[0]]?.observations
+      if (!obs) { console.warn(`  ✗ REST no observations: ${url}`); continue }
+      const periods = Object.keys(obs).map(Number).sort((a, b) => a - b).slice(-12)
+      const total = periods.reduce((sum, k) => sum + (obs[k][0] ?? 0), 0)
+      console.log(`  ✓ REST: ${candidate} (${periods.length} months)`)
+      return total
+    } catch (err) {
+      console.warn(`  ✗ REST error (${candidate}): ${err.message}`)
+    }
+  }
+  throw new Error('All ABS REST candidates failed')
+}
+
 // --- ABS CSV fallback (streams ~4.5 GB line by line) ---
 
 const ABS_CSV_URL = 'https://data.api.abs.gov.au/files/ABS_MERCH_EXP_1.0.0.csv'
-const LNG_SITC_CODES = ['3431', '3413']
+const LNG_SITC_CODES = ['343'] // SITC Rev 3 div 343 = Natural gas (incl. LNG), 3-digit level
 
 function parseCSVLine(line) {
   const fields = []
@@ -264,23 +301,31 @@ async function main() {
   try {
     console.log('Fetching LNG export data...')
 
-    try {
-      annualValueAUD = await fetchFromDISR()
-      console.log('  ✓ Source: DISR Resources and Energy Quarterly')
-    } catch (disrErr) {
-      console.warn(`  DISR failed: ${disrErr.message}`)
-      console.log('  Trying ABS CSV fallback...')
+    const sources = [
+      { name: 'DISR Resources and Energy Quarterly', fn: fetchFromDISR },
+      { name: 'ABS MERCH_EXP REST API',              fn: fetchFromABSREST },
+      { name: 'ABS MERCH_EXP bulk CSV',              fn: fetchFromABSCSV },
+    ]
+
+    let lastErr
+    for (const { name, fn } of sources) {
       try {
-        annualValueAUD = await fetchFromABSCSV()
-        console.log('  ✓ Source: ABS MERCH_EXP CSV')
-      } catch (absErr) {
-        const isTransient = absErr.message.includes('403') || absErr.message.includes('ECONNREFUSED')
-        if (isTransient) {
-          console.warn('Transient network error — keeping existing config, will retry next quarter')
-          process.exit(0)
-        }
-        throw absErr
+        annualValueAUD = await fn()
+        console.log(`  ✓ Source: ${name}`)
+        break
+      } catch (err) {
+        console.warn(`  ${name} failed: ${err.message}`)
+        lastErr = err
       }
+    }
+
+    if (annualValueAUD == null) {
+      const isTransient = lastErr?.message.includes('403') || lastErr?.message.includes('fetch failed')
+      if (isTransient) {
+        console.warn('All sources unreachable (transient) — keeping existing config, will retry next quarter')
+        process.exit(0)
+      }
+      throw lastErr
     }
 
     if (annualValueAUD <= 0) {
